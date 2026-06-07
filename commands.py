@@ -21,6 +21,10 @@ HELP_TEXT = """
         detail chicken 55 6.9 0 2.4 0 oz
         detail oats 3.8 0.13 0.67 0.07 0.1 g
 
+  [green]batch[/green]
+      Enter multi-line input mode. Paste as many add/detail commands as you
+      want (one per line), then hit Enter on a blank line to run them all.
+
   [green]edit[/green] <n>
       Edit the quantity or unit of the nth item in today's log.
       Prompts for new values, keeping current ones if you press Enter.
@@ -223,6 +227,18 @@ def _print_day_block(day: str, entries: list, foods: dict, totals: dict) -> None
 
     con.print(f"\n [bold cyan]{label}[/bold cyan]  [dim]{day}[/dim]")
 
+    # Pre-calculate calories per entry for data bar scaling
+    CAL_BAR_WIDTH = 12
+    entry_cals = []
+    for e in entries:
+        defn = foods.get(e["food"])
+        entry_cals.append(round(defn["calories"] * e["quantity"]) if defn else None)
+    max_cal = max((c for c in entry_cals if c is not None), default=1)
+
+    def cal_bar(cal: int) -> str:
+        filled = round((cal / max_cal) * CAL_BAR_WIDTH)
+        return "█" * filled + "░" * (CAL_BAR_WIDTH - filled)
+
     t = Table(box=box.SIMPLE, show_header=True, header_style="bold dim", pad_edge=False)
     t.add_column("#",       style="dim",          width=3,  justify="right")
     t.add_column("",        width=3)                          # icon
@@ -230,33 +246,36 @@ def _print_day_block(day: str, entries: list, foods: dict, totals: dict) -> None
     t.add_column("Qty",     justify="right",       width=6)
     t.add_column("Unit",    style="dim",           width=6)
     t.add_column("Cal",     justify="right",       width=5,  style="green")
+    t.add_column("",        width=CAL_BAR_WIDTH,             style="green")   # calorie bar
     t.add_column("Fat",     justify="right",       width=5,  style="red")
     t.add_column("Carbs",   justify="right",       width=6,  style="yellow")
     t.add_column("Fiber",   justify="right",       width=6,  style="magenta")
     t.add_column("Prot",    justify="right",       width=6,  style="blue")
 
-    for i, e in enumerate(entries, 1):
+    for i, (e, cal_val) in enumerate(zip(entries, entry_cals), 1):
         defn = foods.get(e["food"])
         if defn:
             icon = "[green]✓[/green]"
             q = e["quantity"]
-            cal  = str(round(defn["calories"] * q))
+            cal  = str(cal_val)
+            bar  = cal_bar(cal_val)
             prot = str(round(defn["protein"]  * q, 1)) + "g"
             carb = str(round(defn["carbs"]    * q, 1)) + "g"
             fat  = str(round(defn["fat"]      * q, 1)) + "g"
             fib  = str(round(defn.get("fiber", 0) * q, 1)) + "g"
         else:
             icon = "[yellow]![/yellow]"
-            cal = prot = carb = fat = fib = "[dim]—[/dim]"
+            cal = bar = prot = carb = fat = fib = "[dim]—[/dim]"
 
         t.add_row(str(i), icon, e["food"], f"{e['quantity']:.1f}", e["unit"],
-                  cal, fat, carb, fib, prot)
+                  cal, bar, fat, carb, fib, prot)
 
     # totals footer
     t.add_section()
     t.add_row(
         "", "", "[dim]Total[/dim]", "", "",
         f"[bold]{round(totals['calories'])}[/bold]",
+        "",
         f"[bold]{round(totals['fat'],     1)}g[/bold]",
         f"[bold]{round(totals['carbs'],   1)}g[/bold]",
         f"[bold]{round(totals['fiber'],   1)}g[/bold]",
@@ -264,6 +283,47 @@ def _print_day_block(day: str, entries: list, foods: dict, totals: dict) -> None
     )
 
     con.print(t)
+
+
+def cmd_batch(_args: list[str]) -> tuple[bool, str]:
+    from rich.console import Console
+    con = Console(legacy_windows=False)
+    con.print("\n [bold cyan]Batch mode[/bold cyan]  [dim]Paste commands one per line. Blank line to run.[/dim]\n")
+
+    lines = []
+    while True:
+        con.print("   [dim]>[/dim] ", end="")
+        raw = input()
+        if raw.strip() == "":
+            break
+        lines.append(raw.strip())
+
+    if not lines:
+        return True, "No commands entered."
+
+    results = []
+    errors = []
+    for line in lines:
+        parts = line.split()
+        if not parts:
+            continue
+        verb = parts[0].lower()
+        args = parts[1:]
+        handler = COMMANDS.get(verb)
+        if handler is None:
+            errors.append(f'Unknown command: "{verb}"')
+        else:
+            ok, msg = handler(args)
+            if ok:
+                results.append(f"[green]✓[/green] {msg}" if msg else f"[green]✓[/green] {line}")
+            else:
+                errors.append(f"[red]✗[/red] {line} — {msg}")
+
+    summary = []
+    summary.extend(results)
+    summary.extend(errors)
+    summary.append(f"\n[bold]{len(results)} logged[/bold], {len(errors)} errors")
+    return True, "\n".join(summary)
 
 
 def cmd_log(args: list[str]) -> tuple[bool, str]:
@@ -294,6 +354,7 @@ COMMANDS = {
     "edit": cmd_edit,
     "remove": cmd_remove,
     "rm": cmd_remove,
+    "batch": cmd_batch,
     "foods": cmd_foods,
     "log": cmd_log,
     "history": cmd_history,
