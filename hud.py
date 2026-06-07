@@ -85,16 +85,31 @@ def render() -> None:
             console.print(f'   - [yellow]"{name}"[/yellow] needs details! (Tracked in: {unit})')
         console.print()
 
+    # ── Exercise ─────────────────────────────────────────────────────────────
+    exercise_entries = db.get_exercise()
+    burned = db.calories_burned_today()
+    if exercise_entries:
+        console.print(div_dash, style="dim")
+        console.print(" [bold]TODAY'S EXERCISE:[/bold]")
+        for i, ex in enumerate(exercise_entries, 1):
+            dur = int(ex["duration_min"])
+            est = " [dim](est)[/dim]" if ex.get("estimated") else ""
+            console.print(f"   [dim]{i:>2}.[/dim]  [cyan]{ex['activity']}[/cyan]  {dur} min  →  [green]{ex['calories']} kcal burned[/green]{est}")
+        console.print()
+
     # ── Nutrition Bars ───────────────────────────────────────────────────────
     console.print(div_dash, style="dim")
-    console.print(" [bold]DAILY NUTRITION[/bold]  [dim]estimated from detailed items[/dim]")
-    console.print()
-
     totals = db.daily_totals()
     goals = db.get_goals()
+    cal_goal = goals["calories"] + burned
+    goal_label = "estimated from detailed items"
+    if burned:
+        goal_label += f"  [green]+{burned} kcal from exercise[/green]"
+    console.print(f" [bold]DAILY NUTRITION[/bold]  [dim]{goal_label}[/dim]")
+    console.print()
 
-    cal_pct = totals["calories"] / goals["calories"] if goals["calories"] else 0
-    _render_bar_line("CALORIES", totals["calories"], goals["calories"], "kcal", _cal_color(cal_pct), num_w=4)
+    cal_pct = totals["calories"] / cal_goal if cal_goal else 0
+    _render_bar_line("CALORIES", totals["calories"], cal_goal, "kcal", _cal_color(cal_pct), num_w=4)
     console.print()
     _render_bar_line("FAT",      totals["fat"],      goals["fat"],      "g",    "bold red")
     _render_bar_line("CARBS",    totals["carbs"],    goals["carbs"],    "g",    "bold yellow")

@@ -21,6 +21,20 @@ HELP_TEXT = """
         detail chicken 55 6.9 0 2.4 0 oz
         detail oats 3.8 0.13 0.67 0.07 0.1 g
 
+  [green]exercise[/green] <activity> <duration> [calories]
+      Log exercise. Duration: 45min, 1hr, 1h30m. Calories optional — omit
+      to auto-estimate based on activity type and your body weight.
+      Examples:
+        exercise run 45min
+        exercise run 45min 400
+        exercise bike 1hr
+
+  [green]rmex[/green] <n>
+      Remove exercise entry #n from today.
+
+  [green]weight[/green] [lbs]
+      View or set your body weight for exercise calorie estimates.
+
   [green]batch[/green]
       Enter multi-line input mode. Paste as many add/detail commands as you
       want (one per line), then hit Enter on a blank line to run them all.
@@ -335,6 +349,75 @@ def cmd_log(args: list[str]) -> tuple[bool, str]:
     return True, ""
 
 
+def _parse_duration(token: str) -> float | None:
+    """Parse duration string into minutes. Accepts: 45, 45min, 45m, 1hr, 1h, 1h30m, 1h30."""
+    import re
+    token = token.lower().strip()
+    # e.g. 1h30m or 1h30
+    m = re.fullmatch(r'(\d+)h(\d+)m?', token)
+    if m:
+        return int(m.group(1)) * 60 + int(m.group(2))
+    # e.g. 1hr, 1h
+    m = re.fullmatch(r'(\d+(?:\.\d+)?)h(?:r|rs)?', token)
+    if m:
+        return float(m.group(1)) * 60
+    # e.g. 45min, 45m, 45
+    m = re.fullmatch(r'(\d+(?:\.\d+)?)(?:min|m)?', token)
+    if m:
+        return float(m.group(1))
+    return None
+
+
+def cmd_exercise(args: list[str]) -> tuple[bool, str]:
+    if len(args) < 2:
+        return False, "Usage: exercise <activity> <duration> [calories]\n  e.g. exercise run 45min  or  exercise run 45min 400"
+
+    activity = args[0].lower()
+    duration_min = _parse_duration(args[1])
+    if duration_min is None:
+        return False, f'Could not parse duration "{args[1]}". Try: 45min, 1hr, 1h30m'
+
+    if len(args) >= 3:
+        try:
+            calories = int(args[2])
+            estimated = False
+        except ValueError:
+            return False, "Calories must be a whole number."
+    else:
+        calories, estimated = db.estimate_calories_burned(activity, duration_min)
+
+    db.add_exercise(activity, duration_min, calories, estimated)
+
+    dur_str = f"{int(duration_min)}min" if duration_min == int(duration_min) else f"{duration_min}min"
+    est_note = " [dim](estimated)[/dim]" if estimated else ""
+    weight_note = f" [dim](based on {db.get_weight_lbs():.0f} lbs — use `weight <lbs>` to update)[/dim]" if estimated else ""
+    return True, f"Logged: {activity} {dur_str} → {calories} kcal burned{est_note}{weight_note}"
+
+
+def cmd_remove_exercise(args: list[str]) -> tuple[bool, str]:
+    if not args:
+        return False, "Usage: rmex <n>"
+    try:
+        n = int(args[0])
+    except ValueError:
+        return False, "Argument must be a number."
+    if db.remove_exercise(n):
+        return True, f"Removed exercise #{n} from today."
+    return False, f"No exercise #{n} today."
+
+
+def cmd_weight(args: list[str]) -> tuple[bool, str]:
+    if not args:
+        current = db.get_weight_lbs()
+        return True, f"Current weight: {current:.0f} lbs. Use `weight <lbs>` to update."
+    try:
+        lbs = float(args[0])
+    except ValueError:
+        return False, "Weight must be a number (lbs)."
+    db.set_weight_lbs(lbs)
+    return True, f"Weight updated to {lbs:.0f} lbs. Exercise estimates will use this going forward."
+
+
 def cmd_history(_args: list[str]) -> tuple[bool, str]:
     days = db.get_all_days()
     if not days:
@@ -355,6 +438,9 @@ COMMANDS = {
     "remove": cmd_remove,
     "rm": cmd_remove,
     "batch": cmd_batch,
+    "exercise": cmd_exercise,
+    "rmex": cmd_remove_exercise,
+    "weight": cmd_weight,
     "foods": cmd_foods,
     "log": cmd_log,
     "history": cmd_history,
