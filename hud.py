@@ -113,5 +113,6 @@ def render() -> None:
             icon = "[green][✓][/green]" if is_detailed else "[yellow][!][/yellow]"
             qty = f"{e['quantity']:.1f}"
             unit_str = e["unit"].ljust(6)
-            console.print(f"   {icon} {qty} {unit_str} x  {e['food']}")
+            num = f"[dim]{i:>2}.[/dim]"
+            console.print(f"   {num} {icon} {qty} {unit_str} x  {e['food']}")
     console.print(div_eq, style="bold cyan")

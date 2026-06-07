@@ -15,7 +15,7 @@ import commands as cmd
 console = Console(legacy_windows=False)
 
 EXIT_COMMANDS = {"quit", "exit", "q", ":q"}
-DISPLAY_COMMANDS = {"history", "log", "foods", "help", "?"}
+DISPLAY_COMMANDS = {"history", "log", "foods", "help", "?", "batch"}
 
 # Commands where the next token should be a known food name
 FOOD_ARG_COMMANDS = {"add", "detail", "edit"}
