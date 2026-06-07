@@ -104,6 +104,79 @@ def daily_totals(day: str | None = None) -> dict:
     return totals
 
 
+# MET values (Metabolic Equivalent of Task) by activity keyword
+MET_TABLE = {
+    "run": 9.8, "running": 9.8, "jog": 7.0, "jogging": 7.0,
+    "walk": 3.5, "walking": 3.5,
+    "bike": 7.5, "biking": 7.5, "cycling": 7.5, "cycle": 7.5,
+    "swim": 8.0, "swimming": 8.0,
+    "weights": 3.5, "lifting": 3.5, "weightlifting": 3.5,
+    "hiit": 8.0,
+    "yoga": 2.5,
+    "elliptical": 5.0,
+    "basketball": 8.0,
+    "soccer": 7.0,
+    "tennis": 7.3,
+    "rowing": 7.0,
+    "hike": 5.3, "hiking": 5.3,
+}
+DEFAULT_MET = 5.0
+DEFAULT_WEIGHT_LBS = 155.0
+
+
+def get_weight_lbs() -> float:
+    data = _load()
+    return data.get("settings", {}).get("weight_lbs", DEFAULT_WEIGHT_LBS)
+
+
+def set_weight_lbs(lbs: float) -> None:
+    data = _load()
+    data.setdefault("settings", {})["weight_lbs"] = lbs
+    _save(data)
+
+
+def estimate_calories_burned(activity: str, duration_min: float) -> tuple[int, bool]:
+    """Returns (calories_burned, was_estimated). Uses MET × weight × hours."""
+    met = MET_TABLE.get(activity.lower(), DEFAULT_MET)
+    weight_kg = get_weight_lbs() * 0.453592
+    calories = met * weight_kg * (duration_min / 60)
+    return round(calories), True
+
+
+def add_exercise(activity: str, duration_min: float, calories: int, estimated: bool) -> None:
+    data = _load()
+    key = today()
+    data.setdefault("exercise", {}).setdefault(key, [])
+    data["exercise"][key].append({
+        "activity": activity,
+        "duration_min": duration_min,
+        "calories": calories,
+        "estimated": estimated,
+    })
+    _save(data)
+
+
+def get_exercise(day: str | None = None) -> list:
+    data = _load()
+    return data.get("exercise", {}).get(day or today(), [])
+
+
+def remove_exercise(index: int) -> bool:
+    data = _load()
+    key = today()
+    entries = data.get("exercise", {}).get(key, [])
+    if index < 1 or index > len(entries):
+        return False
+    entries.pop(index - 1)
+    data["exercise"][key] = entries
+    _save(data)
+    return True
+
+
+def calories_burned_today(day: str | None = None) -> int:
+    return sum(e["calories"] for e in get_exercise(day))
+
+
 DEFAULT_GOALS = {
     "calories": 2000.0,
     "protein": 150.0,
