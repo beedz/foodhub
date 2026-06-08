@@ -109,12 +109,70 @@ Macro order follows the **FDA nutrition label**: Calories → Fat → Carbs → 
 
 ## Data Storage
 
-All data is stored locally in `~/.foodhub/data.json`. Nothing is sent anywhere.
+By default all data is stored **locally** in `~/.foodhub/data.json`. Nothing is sent anywhere.
 
 ```
 ~/.foodhub/
   data.json   ← food definitions + daily log
 ```
+
+---
+
+## Remote Mode (optional)
+
+FoodHUD can run against a hosted backend instead of the local file, so the same data
+is reachable from any machine. This is **online-only** — the TUI talks to the server live.
+
+### How it works
+
+```
+  TUI (fh.py) ──HTTPS (Bearer token)──> FastAPI server ──> SQLite (one JSON doc)
+```
+
+The server (`server/`) is a thin store: `GET /data` returns the whole document,
+`PUT /data` replaces it. The TUI computes everything client-side, exactly as in local mode.
+Set two environment variables to switch the TUI into remote mode:
+
+```bash
+export FOODHUB_API_URL=https://your-app.up.railway.app
+export FOODHUB_TOKEN=your-secret-token
+python fh.py
+```
+
+Unset them to go back to the local file. No other behavior changes.
+
+### Deploying the server (Railway)
+
+1. Push this repo to GitHub and create a Railway project from it.
+2. Railway auto-detects Python (Nixpacks) and runs the start command from `railway.json`:
+   `uvicorn server.app:app --host 0.0.0.0 --port $PORT`.
+3. Add a **persistent volume** mounted at `/data` (SQLite lives there).
+4. Set environment variables:
+   - `FOODHUB_TOKEN` — a long random secret (your clients send this as a Bearer token).
+   - `DATABASE_PATH` — `/data/foodhub.db`.
+5. Health check is at `/health`.
+
+### Migrating your existing data
+
+One-shot upload of your local history to the server:
+
+```bash
+export FOODHUB_API_URL=https://your-app.up.railway.app
+export FOODHUB_TOKEN=your-secret-token
+python scripts/upload_local.py
+```
+
+### Running the server locally (dev)
+
+```bash
+pip install -r server/requirements.txt
+FOODHUB_TOKEN=dev DATABASE_PATH=./dev.db uvicorn server.app:app --reload
+# then, in another shell:
+FOODHUB_API_URL=http://localhost:8000 FOODHUB_TOKEN=dev python fh.py
+```
+
+> **Roadmap:** Phase 1 (this) is the server + repointed TUI. Phase 2 adds granular REST
+> endpoints and a Telegram bot; Phase 3 a native Android app — all on the same backend.
 
 ---
 
