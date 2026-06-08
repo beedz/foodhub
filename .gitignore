@@ -17,6 +17,10 @@ env/
 # User data (personal food log — stays local)
 ~/.foodhub/
 
+# Local server dev artifacts (SQLite databases)
+*.db
+dev.db
+
 # OS
 .DS_Store
 Thumbs.db
