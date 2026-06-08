@@ -1,2 +1,8 @@
+# TUI client
 rich>=13.0.0
 prompt_toolkit>=3.0.0
+
+# Remote backend (server/) — installed by Railway's Nixpacks build.
+# The TUI itself does not import these; they are only needed to run the API server.
+fastapi>=0.110
+uvicorn[standard]>=0.27
