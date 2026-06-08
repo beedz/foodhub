@@ -19,6 +19,8 @@ DISPLAY_COMMANDS = {"history", "log", "foods", "help", "?", "batch"}
 
 # Commands where the next token should be a known food name
 FOOD_ARG_COMMANDS = {"add", "detail", "edit"}
+# Commands where the next token should be a date
+DATE_ARG_COMMANDS = {"goto", "log"}
 
 ALL_COMMANDS = list(cmd.COMMANDS.keys()) + list(EXIT_COMMANDS)
 
@@ -44,8 +46,10 @@ class FoodHudCompleter(Completer):
 
         verb = parts[0].lower()
 
+        typing_second = len(parts) == 1 or (len(parts) == 2 and not text.endswith(" "))
+
         # Food name autocomplete for relevant commands
-        if verb in FOOD_ARG_COMMANDS and (len(parts) == 1 or (len(parts) == 2 and not text.endswith(" "))):
+        if verb in FOOD_ARG_COMMANDS and typing_second:
             # typing the food name (second token)
             partial = parts[1].lower() if len(parts) == 2 else ""
             foods = db.get_foods()
@@ -59,6 +63,17 @@ class FoodHudCompleter(Completer):
                         start_position=-len(partial),
                         display_meta=meta,
                     )
+
+        # Date autocomplete for goto/log
+        if verb in DATE_ARG_COMMANDS and typing_second:
+            partial = parts[1].lower() if len(parts) == 2 else ""
+            candidates = ["today", "yesterday"] + db.get_all_days()
+            for cand in candidates:
+                if cand.startswith(partial):
+                    meta = ""
+                    if cand in ("today", "yesterday"):
+                        meta = "relative"
+                    yield Completion(cand, start_position=-len(partial), display_meta=meta)
 
 
 COMPLETER_STYLE = Style.from_dict({

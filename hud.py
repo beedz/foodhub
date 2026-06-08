@@ -61,14 +61,21 @@ def render() -> None:
     div_eq = "=" * W
     div_dash = "-" * W
 
-    today_str = date.today().strftime("%A, %B %d, %Y").replace(" 0", " ")
+    active_day = db.get_active_day()
+    viewing_today = db.is_viewing_today()
+    day_obj = date.fromisoformat(active_day)
+    day_str = day_obj.strftime("%A, %B %d, %Y").replace(" 0", " ")
+    short_day = day_obj.strftime("%a, %b %d").replace(" 0", " ")
 
     # ── Header ──────────────────────────────────────────────────────────────
     console.print(div_eq, style="bold cyan")
-    title = f" FOODHUD (fh)  |  {today_str}"
+    title = f" FOODHUD (fh)  |  {day_str}"
     status = "[Active]"
     gap = W - len(title) - len(status) - 1
     console.print(title + " " * max(gap, 1) + status, style="bold cyan")
+    if not viewing_today:
+        banner = f" ⏪ VIEWING PAST DAY — type 'today' to return"
+        console.print(banner, style="bold yellow")
     console.print(div_eq, style="bold cyan")
 
     # ── Attention Required ───────────────────────────────────────────────────
@@ -90,7 +97,8 @@ def render() -> None:
     burned = db.calories_burned_today()
     if exercise_entries:
         console.print(div_dash, style="dim")
-        console.print(" [bold]TODAY'S EXERCISE:[/bold]")
+        ex_title = "TODAY'S EXERCISE:" if viewing_today else f"EXERCISE — {short_day}:"
+        console.print(f" [bold]{ex_title}[/bold]")
         for i, ex in enumerate(exercise_entries, 1):
             dur = int(ex["duration_min"])
             est = " [dim](est)[/dim]" if ex.get("estimated") else ""
@@ -117,9 +125,10 @@ def render() -> None:
     _render_bar_line("PROTEIN",  totals["protein"],  goals["protein"],  "g",    "bold blue")
     console.print()
 
-    # ── Today's Log ──────────────────────────────────────────────────────────
+    # ── Log ──────────────────────────────────────────────────────────────────
     console.print(div_dash, style="dim")
-    console.print(" [bold]TODAY'S LOG:[/bold]")
+    log_title = "TODAY'S LOG:" if viewing_today else f"LOG — {short_day}:"
+    console.print(f" [bold]{log_title}[/bold]")
     if not entries:
         console.print("   [dim](nothing logged yet)[/dim]")
     else:

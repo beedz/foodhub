@@ -49,11 +49,22 @@ HELP_TEXT = """
   [green]foods[/green]
       List all defined foods with their nutritional info.
 
-  [green]log[/green] [date]
-      Show today's log (or a specific date: YYYY-MM-DD).
+  [green]goto[/green] <date>
+      Time-travel to a past day. The whole HUD switches to it and every
+      command (add/edit/remove/exercise) then operates on that day.
+      Accepts: YYYY-MM-DD, yesterday, -N (N days ago). Type `today` to return.
 
-  [green]history[/green]
-      Show every day you've logged, with entries and totals.
+  [green]today[/green]
+      Return to today after using goto.
+
+  [green]log[/green] [date]
+      Show a single day's log table (defaults to the day you're viewing).
+
+  [green]history[/green] [n | all | full [n]]
+      Compact calorie overview, one line per day vs goal (default last 14).
+        history 30    last 30 days
+        history all   every day
+        history full  detailed per-item tables (last 7)
 
   [green]help[/green]    Show this help.
   [green]quit[/green]    Exit FoodHUD.
@@ -87,7 +98,8 @@ def cmd_add(args: list[str]) -> tuple[bool, str]:
         unit = defn["unit"] if defn else "item"
 
     db.add_entry(food, quantity, unit)
-    return True, f'Logged: {quantity:.1f} {unit} of "{food}"'
+    day_suffix = "" if db.is_viewing_today() else f" [dim]→ {_active_day_noun()}[/dim]"
+    return True, f'Logged: {quantity:.1f} {unit} of "{food}"{day_suffix}'
 
 
 def _prompt_field(label: str, default: float | None = None) -> float | None:
@@ -175,7 +187,7 @@ def cmd_edit(args: list[str]) -> tuple[bool, str]:
 
     entries = db.get_log()
     if n < 1 or n > len(entries):
-        return False, f"No item #{n} in today's log."
+        return False, f"No item #{n} in {_active_day_noun()}'s log."
 
     entry = entries[n - 1]
     from rich.console import Console
@@ -208,8 +220,8 @@ def cmd_remove(args: list[str]) -> tuple[bool, str]:
     except ValueError:
         return False, "Argument must be a number."
     if db.remove_entry(n):
-        return True, f"Removed item #{n} from today's log."
-    return False, f"No item #{n} in today's log."
+        return True, f"Removed item #{n} from {_active_day_noun()}'s log."
+    return False, f"No item #{n} in {_active_day_noun()}'s log."
 
 
 def cmd_foods(_args: list[str]) -> tuple[bool, str]:
@@ -340,11 +352,27 @@ def cmd_batch(_args: list[str]) -> tuple[bool, str]:
     return True, "\n".join(summary)
 
 
+def _day_label(day: str) -> str:
+    """'Fri, Jun 5' style label for an ISO date string."""
+    from datetime import date
+    try:
+        return date.fromisoformat(day).strftime("%a, %b %d").replace(" 0", " ")
+    except ValueError:
+        return day
+
+
+def _active_day_noun() -> str:
+    """'today' when viewing today, else 'Fri, Jun 5'."""
+    return "today" if db.is_viewing_today() else _day_label(db.get_active_day())
+
+
 def cmd_log(args: list[str]) -> tuple[bool, str]:
-    day = args[0] if args else db.today()
+    day = db.parse_day(args[0]) if args else db.get_active_day()
+    if day is None:
+        return False, f'Could not parse date "{args[0]}". Try: 2026-06-05, today, yesterday, -1'
     entries = db.get_log(day)
     if not entries:
-        return True, f"No entries for {day}."
+        return True, f"No entries for {_day_label(day)}."
     _print_day_block(day, entries, db.get_foods(), db.daily_totals(day))
     return True, ""
 
@@ -391,7 +419,8 @@ def cmd_exercise(args: list[str]) -> tuple[bool, str]:
     dur_str = f"{int(duration_min)}min" if duration_min == int(duration_min) else f"{duration_min}min"
     est_note = " [dim](estimated)[/dim]" if estimated else ""
     weight_note = f" [dim](based on {db.get_weight_lbs():.0f} lbs — use `weight <lbs>` to update)[/dim]" if estimated else ""
-    return True, f"Logged: {activity} {dur_str} → {calories} kcal burned{est_note}{weight_note}"
+    day_suffix = "" if db.is_viewing_today() else f" [dim]→ {_active_day_noun()}[/dim]"
+    return True, f"Logged: {activity} {dur_str} → {calories} kcal burned{est_note}{weight_note}{day_suffix}"
 
 
 def cmd_remove_exercise(args: list[str]) -> tuple[bool, str]:
@@ -402,8 +431,8 @@ def cmd_remove_exercise(args: list[str]) -> tuple[bool, str]:
     except ValueError:
         return False, "Argument must be a number."
     if db.remove_exercise(n):
-        return True, f"Removed exercise #{n} from today."
-    return False, f"No exercise #{n} today."
+        return True, f"Removed exercise #{n} from {_active_day_noun()}."
+    return False, f"No exercise #{n} on {_active_day_noun()}."
 
 
 def cmd_weight(args: list[str]) -> tuple[bool, str]:
@@ -418,17 +447,92 @@ def cmd_weight(args: list[str]) -> tuple[bool, str]:
     return True, f"Weight updated to {lbs:.0f} lbs. Exercise estimates will use this going forward."
 
 
-def cmd_history(_args: list[str]) -> tuple[bool, str]:
+def _print_history_compact(days: list[str]) -> None:
+    from rich.console import Console
+    from rich.text import Text
+    con = Console(legacy_windows=False)
+
+    BAR_W = 16
+    base_goal = db.get_goals()["calories"]
+
+    con.print(f"\n [bold]HISTORY[/bold]  [dim]({len(days)} day{'s' if len(days) != 1 else ''})[/dim]\n")
+
+    for day in days:
+        consumed = round(db.daily_totals(day)["calories"])
+        burned = db.calories_burned_today(day)
+        goal = round(base_goal + burned)
+        pct = (consumed / goal) if goal else 0
+        filled = min(round(pct * BAR_W), BAR_W)
+        over = consumed > goal
+        bar_color = "red" if over else "green"
+        bar = "█" * filled + "░" * (BAR_W - filled)
+
+        label = _day_label(day)
+        is_active = day == db.get_active_day()
+
+        line = Text()
+        line.append(" ● " if is_active else "   ", style="yellow")
+        line.append(f"{label:<11}", style="bold" if day == db.today() else "white")
+        line.append(f"{consumed:>5} / {goal:<5} ", style="dim")
+        line.append("[", style="dim")
+        line.append(bar, style=bar_color)
+        line.append("] ", style="dim")
+        line.append(f"{int(pct*100):>3}%", style=bar_color if over else "white")
+        if over:
+            line.append("  over", style="red")
+        if burned:
+            line.append(f"   🏃 +{burned}", style="cyan")
+        con.print(line)
+    con.print()
+
+
+def cmd_history(args: list[str]) -> tuple[bool, str]:
     days = db.get_all_days()
     if not days:
         return True, "No history yet."
-    from rich.console import Console
-    con = Console(legacy_windows=False)
-    con.print(f"\n [bold]Full History[/bold]  [dim]({len(days)} day{'s' if len(days) != 1 else ''})[/dim]")
-    foods = db.get_foods()
-    for day in days:
-        _print_day_block(day, db.get_log(day), foods, db.daily_totals(day))
+
+    # Detailed mode: `history full [n]`
+    if args and args[0].lower() == "full":
+        n = 7
+        if len(args) >= 2 and args[1].isdigit():
+            n = int(args[1])
+        from rich.console import Console
+        con = Console(legacy_windows=False)
+        con.print(f"\n [bold]Full History[/bold]  [dim](last {min(n, len(days))} days)[/dim]")
+        foods = db.get_foods()
+        for day in days[:n]:
+            _print_day_block(day, db.get_log(day), foods, db.daily_totals(day))
+        return True, ""
+
+    # Compact mode: default 14, `history N`, or `history all`
+    if args and args[0].lower() == "all":
+        selected = days
+    elif args and args[0].isdigit():
+        selected = days[:int(args[0])]
+    else:
+        selected = days[:14]
+
+    _print_history_compact(selected)
     return True, ""
+
+
+def cmd_goto(args: list[str]) -> tuple[bool, str]:
+    if not args:
+        db.set_active_day(None)
+        return True, "Now viewing today."
+    day = db.parse_day(args[0])
+    if day is None:
+        return False, f'Could not parse date "{args[0]}". Try: 2026-06-05, today, yesterday, -1'
+    if day == db.today():
+        db.set_active_day(None)
+        return True, "Now viewing today."
+    db.set_active_day(day)
+    return True, f"Now viewing {_day_label(day)} — type 'today' to return."
+
+
+def cmd_today(_args: list[str]) -> tuple[bool, str]:
+    db.set_active_day(None)
+    return True, "Now viewing today."
 
 
 COMMANDS = {
@@ -441,6 +545,8 @@ COMMANDS = {
     "exercise": cmd_exercise,
     "rmex": cmd_remove_exercise,
     "weight": cmd_weight,
+    "goto": cmd_goto,
+    "today": cmd_today,
     "foods": cmd_foods,
     "log": cmd_log,
     "history": cmd_history,
