@@ -1,10 +1,43 @@
 import json
 import os
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 DATA_DIR = Path.home() / ".foodhub"
 DATA_FILE = DATA_DIR / "data.json"
+
+# ── Active day (ephemeral, session-only) ──────────────────────────────────────
+# When the user "goes to" a past day, all reads/writes target it until reset.
+_active_day: str | None = None
+
+
+def get_active_day() -> str:
+    return _active_day or today()
+
+
+def set_active_day(day: str | None) -> None:
+    global _active_day
+    _active_day = day
+
+
+def is_viewing_today() -> bool:
+    return get_active_day() == today()
+
+
+def parse_day(token: str) -> str | None:
+    """Parse a day token into an ISO date string, or None if unparseable.
+    Accepts: 'today', 'yesterday', 'YYYY-MM-DD', and '-N' (N days ago)."""
+    token = token.strip().lower()
+    if token in ("today", ""):
+        return today()
+    if token == "yesterday":
+        return (date.today() - timedelta(days=1)).isoformat()
+    if token.startswith("-") and token[1:].isdigit():
+        return (date.today() - timedelta(days=int(token[1:]))).isoformat()
+    try:
+        return date.fromisoformat(token).isoformat()
+    except ValueError:
+        return None
 
 
 def _load() -> dict:
@@ -30,21 +63,21 @@ def get_foods() -> dict:
 
 def get_log(day: str | None = None) -> list:
     data = _load()
-    return data["log"].get(day or today(), [])
+    return data["log"].get(day or get_active_day(), [])
 
 
 def add_entry(food: str, quantity: float, unit: str) -> None:
     data = _load()
-    key = today()
+    key = get_active_day()
     data["log"].setdefault(key, [])
     data["log"][key].append({"food": food, "quantity": quantity, "unit": unit})
     _save(data)
 
 
 def edit_entry(index: int, quantity: float, unit: str) -> bool:
-    """Update quantity/unit of a 1-based index in today's log. Returns True if updated."""
+    """Update quantity/unit of a 1-based index in the active day's log. Returns True if updated."""
     data = _load()
-    key = today()
+    key = get_active_day()
     entries = data["log"].get(key, [])
     if index < 1 or index > len(entries):
         return False
@@ -56,15 +89,16 @@ def edit_entry(index: int, quantity: float, unit: str) -> bool:
 
 
 def get_all_days() -> list[str]:
-    """Return all logged dates sorted descending."""
+    """Return all dates with food or exercise entries, sorted descending."""
     data = _load()
-    return sorted(data["log"].keys(), reverse=True)
+    days = set(data["log"].keys()) | set(data.get("exercise", {}).keys())
+    return sorted(days, reverse=True)
 
 
 def remove_entry(index: int) -> bool:
-    """Remove 1-based index from today's log. Returns True if removed."""
+    """Remove 1-based index from the active day's log. Returns True if removed."""
     data = _load()
-    key = today()
+    key = get_active_day()
     entries = data["log"].get(key, [])
     if index < 1 or index > len(entries):
         return False
@@ -90,7 +124,7 @@ def define_food(name: str, calories: float, protein: float, carbs: float, fat: f
 def daily_totals(day: str | None = None) -> dict:
     """Returns {calories, protein, carbs, fat} for detailed items only."""
     foods = get_foods()
-    entries = get_log(day)
+    entries = get_log(day or get_active_day())
     totals = {"calories": 0.0, "protein": 0.0, "carbs": 0.0, "fat": 0.0, "fiber": 0.0}
     for entry in entries:
         defn = foods.get(entry["food"])
@@ -145,7 +179,7 @@ def estimate_calories_burned(activity: str, duration_min: float) -> tuple[int, b
 
 def add_exercise(activity: str, duration_min: float, calories: int, estimated: bool) -> None:
     data = _load()
-    key = today()
+    key = get_active_day()
     data.setdefault("exercise", {}).setdefault(key, [])
     data["exercise"][key].append({
         "activity": activity,
@@ -158,12 +192,12 @@ def add_exercise(activity: str, duration_min: float, calories: int, estimated: b
 
 def get_exercise(day: str | None = None) -> list:
     data = _load()
-    return data.get("exercise", {}).get(day or today(), [])
+    return data.get("exercise", {}).get(day or get_active_day(), [])
 
 
 def remove_exercise(index: int) -> bool:
     data = _load()
-    key = today()
+    key = get_active_day()
     entries = data.get("exercise", {}).get(key, [])
     if index < 1 or index > len(entries):
         return False
@@ -174,7 +208,7 @@ def remove_exercise(index: int) -> bool:
 
 
 def calories_burned_today(day: str | None = None) -> int:
-    return sum(e["calories"] for e in get_exercise(day))
+    return sum(e["calories"] for e in get_exercise(day or get_active_day()))
 
 
 DEFAULT_GOALS = {
