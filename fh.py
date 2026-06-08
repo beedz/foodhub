@@ -97,8 +97,17 @@ def run() -> None:
     skip_hud = False
 
     while True:
+        # Pull a fresh document once per loop so a render performs one network
+        # fetch (remote mode) and reflects edits from other clients.
+        db.refresh()
+
         if not skip_hud:
-            hud.render()
+            try:
+                hud.render()
+            except RuntimeError as e:
+                console.clear()
+                console.print(f"\n [bold red]⚠ Connection problem:[/bold red] {e}\n")
+                console.print(" [dim]Check FOODHUB_API_URL / FOODHUB_TOKEN, or your network.[/dim]\n")
 
         if msg is not None:
             style = "green" if msg_ok else "red"
@@ -132,7 +141,11 @@ def run() -> None:
             msg = f'Unknown command: "{verb}". Type [bold]help[/bold] for commands.'
             skip_hud = False
         else:
-            msg_ok, msg = handler(args)
+            try:
+                msg_ok, msg = handler(args)
+            except RuntimeError as e:
+                msg_ok, msg = False, str(e)
+                skip_hud = False
             if not msg:
                 msg = None
 

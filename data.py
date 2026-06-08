@@ -1,10 +1,69 @@
 import json
 import os
+import urllib.request
+import urllib.error
 from datetime import date, timedelta
 from pathlib import Path
 
 DATA_DIR = Path.home() / ".foodhub"
 DATA_FILE = DATA_DIR / "data.json"
+
+DEFAULT_DOC = {"foods": {}, "log": {}}
+
+# ── Storage backend ───────────────────────────────────────────────────────────
+# If FOODHUB_API_URL is set, the TUI talks to a remote server (online-only mode);
+# otherwise it reads/writes the local JSON file exactly as before. The whole app
+# funnels through _load()/_save(), so this is the only place that changes.
+API_URL = os.environ.get("FOODHUB_API_URL")
+API_TOKEN = os.environ.get("FOODHUB_TOKEN")
+
+# Per-render document cache: a single HUD render calls _load() many times. We cache
+# the document and let the REPL call refresh() once per loop, so each render performs
+# exactly one network fetch. Mutations write through and keep the cache warm.
+_cache: dict | None = None
+
+
+def is_remote() -> bool:
+    return bool(API_URL)
+
+
+def refresh() -> None:
+    """Drop the cached document so the next _load() re-fetches. Called once per REPL loop."""
+    global _cache
+    _cache = None
+
+
+def _remote_request(method: str, path: str, payload: dict | None = None) -> dict:
+    url = API_URL.rstrip("/") + path
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Authorization", f"Bearer {API_TOKEN}")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Server error {e.code}: {e.reason}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Cannot reach FoodHUD server at {API_URL}: {e.reason}") from e
+
+
+def _fetch_doc() -> dict:
+    if is_remote():
+        return _remote_request("GET", "/data").get("doc", dict(DEFAULT_DOC))
+    if not DATA_FILE.exists():
+        return dict(DEFAULT_DOC)
+    with open(DATA_FILE, "r") as f:
+        return json.load(f)
+
+
+def _store_doc(doc: dict) -> None:
+    if is_remote():
+        _remote_request("PUT", "/data", doc)
+        return
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(DATA_FILE, "w") as f:
+        json.dump(doc, f, indent=2)
 
 # ── Active day (ephemeral, session-only) ──────────────────────────────────────
 # When the user "goes to" a past day, all reads/writes target it until reset.
@@ -41,16 +100,18 @@ def parse_day(token: str) -> str | None:
 
 
 def _load() -> dict:
-    if not DATA_FILE.exists():
-        return {"foods": {}, "log": {}}
-    with open(DATA_FILE, "r") as f:
-        return json.load(f)
+    """Return the FoodHUD document, using the per-render cache when available."""
+    global _cache
+    if _cache is None:
+        _cache = _fetch_doc()
+    return _cache
 
 
 def _save(data: dict) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    """Persist the document (local file or remote server) and keep the cache warm."""
+    global _cache
+    _store_doc(data)
+    _cache = data
 
 
 def today() -> str:
